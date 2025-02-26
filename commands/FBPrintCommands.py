@@ -1,5 +1,5 @@
 #!/usr/bin/python
-
+import json
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
 #
 # This source code is licensed under the MIT license found in the
@@ -7,6 +7,7 @@
 
 import os
 import re
+import base64
 import subprocess
 
 import fbchisellldbbase as fb
@@ -31,6 +32,11 @@ def lldbcommands():
         FBPrintApplicationDocumentsPath(),
         FBPrintApplicationBundlePath(),
         FBPrintData(),
+        FBPrintBytes(),
+        FBPrintNSData(),
+        FBNSDataFromString(),
+        FBNSDataFromHex(),
+        FBNSDictionaryFromStr(),
         FBPrintTargetActions(),
         FBPrintJSON(),
         FBPrintSwiftJSON(),
@@ -622,15 +628,110 @@ class FBPrintData(fb.FBCommand):
             enc = 0x98000100
         elif encoding_text == "utf32l":
             enc = 0x9C000100
-
         print(
             fb.describeObject(
                 "[[NSString alloc] initWithData:{} encoding:{}]".format(
-                    arguments[0], enc
+                    f'(NSData *){arguments[0]}', enc
                 )
             )
         )
 
+
+class FBPrintBytes(fb.FBCommand):
+
+    def name(self):
+        return "pbytes"
+
+    def description(self):
+        return "Print the bytes in python bytes."
+
+    def args(self):
+        return [fb.FBCommandArgument(arg='bytes_address', type='id *', help='bytes address.'),
+                fb.FBCommandArgument(arg='bytes_length', type='int *', help='bytes length.')]
+
+    def run(self, arguments, options):
+        bytes_address = fb.evaluateInputExpression(arguments[0])
+        bytes_length = fb.evaluateInputExpression(arguments[1])
+        nsdata_description = fb.evaluateExpressionValue(
+            f'(NSData*)[NSData dataWithBytes:{bytes_address} length:{bytes_length}]').GetObjectDescription()
+        print(bytes.fromhex(nsdata_description[1:-1]))
+
+class FBPrintNSData(fb.FBCommand):
+
+    def name(self):
+        return "pnsdata"
+
+    def description(self):
+        return "Print the NSData in python bytes object."
+
+    def args(self):
+        return [fb.FBCommandArgument(arg='nsdata_address', type='id *', help='nsdata')]
+
+    def run(self, arguments, options):
+        nsdata_addr = fb.evaluateInputExpression(arguments[0])
+        nsdata_description = fb.evaluateExpressionValue(f'(NSData*){nsdata_addr}').GetObjectDescription()
+        print(bytes.fromhex(nsdata_description[1:-1]))
+
+
+class FBNSDataFromString(fb.FBCommand):
+
+    def name(self):
+        return "nsdata_from_str"
+
+    def description(self):
+        return "get NSData from python str."
+
+    def args(self):
+        return [fb.FBCommandArgument(arg="data string", type="string", help="The data string")]
+
+    def run(self, arguments, options):
+        print(arguments[0])
+        b64_str = base64.b64encode(arguments[0].encode()).decode()
+        nsdata_addr = fb.evaluateExpressionValue(
+            f'(NSData*)[[NSData alloc] initWithBase64EncodedString:@"{b64_str}" options:0]')
+        # 避免符号转译错误比如: ".
+        # nsstring_addr = fb.evaluateObjectExpression(f'(NSString *)[[NSString alloc] initWithString:@"{arguments[0]}"]')
+        # nsdata_addr = fb.evaluateExpressionValue(f'(NSData*)[{nsstring_addr} dataUsingEncoding:4]')
+        print(nsdata_addr)
+
+class FBNSDataFromHex(fb.FBCommand):
+
+    def name(self):
+        return "nsdata_from_hex"
+
+    def description(self):
+        return "get NSData from python hex string."
+
+    def args(self):
+        return [fb.FBCommandArgument(arg="hex string", type="string", help="The hex string")]
+
+    def run(self, arguments, options):
+        b64_str = base64.b64encode(bytes.fromhex(arguments[0])).decode()
+        # base64_sb_value = fb.evaluateExpressionValue(f'[[NSString alloc] initWithString:@"{b64_str}"]')
+        # lldb.SBValue
+        # nsdata_addr = fb.evaluateExpressionValue(f'(NSData*)[[NSData alloc] initWithBase64EncodedString:{base64_sb_value.GetName()} options:0]')
+        nsdata_addr = fb.evaluateExpressionValue(f'(NSData*)[[NSData alloc] initWithBase64EncodedString:@"{b64_str}" options:0]')
+        print(nsdata_addr)
+
+
+class FBNSDictionaryFromStr(fb.FBCommand):
+
+    def name(self):
+        return "nsdict_from_str"
+
+    def description(self):
+        return "get NSDictionary from python string."
+
+    def args(self):
+        return [fb.FBCommandArgument(arg="json string", type="string", help="The json string")]
+
+    def run(self, arguments, options):
+        print(arguments[0])
+        b64_str = base64.b64encode(arguments[0].encode()).decode()
+        nsdata_sb_value = fb.evaluateExpressionValue(f'(NSData*)[[NSData alloc] initWithBase64EncodedString:@"{b64_str}" options:0]')
+        print(nsdata_sb_value)
+        nsdict_sb_value = fb.evaluateExpressionValue(f'(NSDictionary *)[NSJSONSerialization JSONObjectWithData:{nsdata_sb_value.GetName()} options:NSJSONReadingMutableContainers error:nil];')
+        print(nsdict_sb_value)
 
 class FBPrintTargetActions(fb.FBCommand):
     def name(self):
