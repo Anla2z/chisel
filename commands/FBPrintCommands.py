@@ -685,7 +685,6 @@ class FBNSDataFromString(fb.FBCommand):
         return [fb.FBCommandArgument(arg="data string", type="string", help="The data string")]
 
     def run(self, arguments, options):
-        print(arguments[0])
         b64_str = base64.b64encode(arguments[0].encode()).decode()
         nsdata_addr = fb.evaluateExpressionValue(
             f'(NSData*)[[NSData alloc] initWithBase64EncodedString:@"{b64_str}" options:0]')
@@ -726,7 +725,6 @@ class FBNSDictionaryFromStr(fb.FBCommand):
         return [fb.FBCommandArgument(arg="json string", type="string", help="The json string")]
 
     def run(self, arguments, options):
-        print(arguments[0])
         b64_str = base64.b64encode(arguments[0].encode()).decode()
         nsdata_sb_value = fb.evaluateExpressionValue(f'(NSData*)[[NSData alloc] initWithBase64EncodedString:@"{b64_str}" options:0]')
         print(nsdata_sb_value)
