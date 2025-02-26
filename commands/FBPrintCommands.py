@@ -1,5 +1,5 @@
 #!/usr/bin/python
-import json
+
 # Copyright (c) Facebook, Inc. and its affiliates. All Rights Reserved
 #
 # This source code is licensed under the MIT license found in the
@@ -37,6 +37,8 @@ def lldbcommands():
         FBNSDataFromString(),
         FBNSDataFromHex(),
         FBNSDictionaryFromStr(),
+        FBMemeryWriteInt(),
+        FBMemeryWriteData(),
         FBPrintTargetActions(),
         FBPrintJSON(),
         FBPrintSwiftJSON(),
@@ -44,6 +46,18 @@ def lldbcommands():
         FBPrintToClipboard(),
         FBPrintObjectInObjc(),
     ]
+
+
+def exe_lldb_script(command_script):
+    # print(command_script)
+    res = lldb.SBCommandReturnObject()
+    interpreter = lldb.debugger.GetCommandInterpreter()
+    interpreter.HandleCommand(command_script, res)
+    if not res.HasResult():
+        # something error
+        print(res.GetError())
+        return
+    return res.GetOutput()
 
 
 class FBPrintViewHierarchyCommand(fb.FBCommand):
@@ -686,12 +700,14 @@ class FBNSDataFromString(fb.FBCommand):
 
     def run(self, arguments, options):
         b64_str = base64.b64encode(arguments[0].encode()).decode()
-        nsdata_addr = fb.evaluateExpressionValue(
+        nsdata_sb_value = fb.evaluateExpressionValue(
             f'(NSData*)[[NSData alloc] initWithBase64EncodedString:@"{b64_str}" options:0]')
         # 避免符号转译错误比如: ".
         # nsstring_addr = fb.evaluateObjectExpression(f'(NSString *)[[NSString alloc] initWithString:@"{arguments[0]}"]')
         # nsdata_addr = fb.evaluateExpressionValue(f'(NSData*)[{nsstring_addr} dataUsingEncoding:4]')
-        print(nsdata_addr)
+        # lldb.SBValue
+        print(nsdata_sb_value.__repr__() + f', length_addr: {hex(int(nsdata_sb_value.GetValue(), 16)+8)}, bytes_addr:' + fb.evaluateExpression(f'(id *)[{nsdata_sb_value.GetName()} bytes]'))
+
 
 class FBNSDataFromHex(fb.FBCommand):
 
@@ -730,6 +746,103 @@ class FBNSDictionaryFromStr(fb.FBCommand):
         print(nsdata_sb_value)
         nsdict_sb_value = fb.evaluateExpressionValue(f'(NSDictionary *)[NSJSONSerialization JSONObjectWithData:{nsdata_sb_value.GetName()} options:NSJSONReadingMutableContainers error:nil];')
         print(nsdict_sb_value)
+
+
+class FBMemeryWriteInt(fb.FBCommand):
+    def name(self):
+        return "mem_writ_int"
+
+    def description(self):
+        return "write int to the address."
+
+    def args(self):
+        return [fb.FBCommandArgument(arg="address", type="string", help="The address."),
+                fb.FBCommandArgument(arg="int", type="int", help="The int to be write.")]
+
+    @staticmethod
+    def int2little_hex(num: int, bit=16):
+        # 整数转化为16位小端头16近制数据, 作为写入前的准备
+        hex_str = hex(num)[2:].rjust(bit, '0')
+        new_hex_str_list = []
+        for i in range(0, len(hex_str), 2):
+            new_hex_str_list.append('0x' + hex_str[i: i + 2])
+        new_hex_str_list.reverse()
+        return ' '.join(new_hex_str_list)
+
+    def run(self, arguments, options):
+        exe_lldb_script(f'memory write {arguments[0]} {self.int2little_hex(eval(arguments[1]))}')
+
+
+class FBMemeryWriteData(fb.FBCommand):
+    def name(self):
+        return "mem_writ_data"
+
+    def description(self):
+        return "write string to the address."
+
+    def options(self):
+        return [
+            fb.FBCommandArgument(
+                arg="from_hex",
+                short="-g",
+                long="--from_hex",
+                boolean=True,
+                default=False,
+                help="from data hex string",
+            ),
+            fb.FBCommandArgument(
+                arg="from_base64",
+                short="-b",
+                long="--from_base64",
+                boolean=True,
+                default=False,
+                help="from data base64 string",
+            ),
+            fb.FBCommandArgument(
+                # 107, 120, 107, 107, 100 or 107 120 107 107 100
+                arg="from_int_array",
+                short="-a",
+                long="--from_int_array",
+                boolean=True,
+                default=False,
+                help="data from int array",
+            )
+        ]
+
+    def args(self):
+        return [fb.FBCommandArgument(arg="address", type="string", help="The address."),
+                fb.FBCommandArgument(arg="string", type="string", help="The data to be write.")]
+
+    @staticmethod
+    def data2_hex(data: str or bytes, bit=16):
+        if isinstance(data, str):
+            data = data.encode()
+        hex_str = data.hex()
+        new_hex_str_list = []
+        for i in range(0, len(hex_str), 2):
+            # new_hex_str_list.append('0x' + hex_str[i: i + 2])
+            new_hex_str_list.append(hex_str[i: i + 2])
+        new_hex_str_list.append('00')
+        return ' '.join(new_hex_str_list)
+
+    def run(self, arguments, options):
+        # data_bytes = arguments[1]
+        from_hex = False if options.from_hex is None else True
+        from_base64 = False if options.from_base64 is None else True
+        from_int_array = False if options.from_int_array is None else True
+        if from_hex:
+            data_bytes = bytes.fromhex(arguments[1])
+        elif from_base64:
+            data_bytes = base64.b64decode(arguments[1])
+        elif from_int_array:
+            if len(arguments)>2:
+                data_bytes = bytes([int(i) for i in arguments[1:]])
+            else:
+                data_bytes = bytes(eval(f'[{arguments[1]}]'))
+        else:
+            data_bytes = arguments[1]
+        exe_lldb_script(f'memory write {arguments[0]} {self.data2_hex(data_bytes)}')
+
 
 class FBPrintTargetActions(fb.FBCommand):
     def name(self):
